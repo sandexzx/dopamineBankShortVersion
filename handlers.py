@@ -1,12 +1,19 @@
-from aiogram import Router, F
+import logging
+from aiogram import Bot, Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.utils.callback_answer import CallbackAnswerMiddleware
 
 import keyboards
 import database
 from datetime import datetime, timedelta
+from contextlib import suppress
+import asyncio
+
+# Словарь для хранения задач секундомеров для пользователей
+active_timers = {}
 
 # Определение состояний FSM
 class RewardStates(StatesGroup):
@@ -62,10 +69,19 @@ async def start_task(message: Message):
     # Начинаем новую задачу
     task = database.start_task(message.from_user.id)
     
-    await message.answer(
-        "Секундомер запущен! Время начинает накапливаться.\n"
-        "Когда закончишь задачу, выбери её сложность:",
-        reply_markup=keyboards.difficulty_menu()
+    # Отправляем сообщение с секундомером
+    timer_message = await message.answer(
+        "⏱️ Секундомер: 00:00:00\n💰 Баллы: 0",
+        reply_markup=keyboards.timer_control_menu()
+    )
+
+    # Запускаем обновление секундомера
+    user_id = message.from_user.id
+    if user_id in active_timers:
+        active_timers[user_id].cancel()
+
+    active_timers[user_id] = asyncio.create_task(
+        update_timer(user_id, timer_message.message_id, message.chat.id)
     )
 
 # Словарь для преобразования названий сложности в ключи БД
@@ -78,7 +94,7 @@ difficulty_map = {
     "Катастрофическая": "catastrophic"
 }
 
-# Обработчик завершения задачи
+# Обработчик завершения задачи по выбору сложности
 @router.message(F.text.in_(difficulty_map.keys()))
 async def end_task(message: Message):
     user = database.get_user(message.from_user.id)
@@ -473,3 +489,93 @@ async def back_to_rewards_menu_handler(callback: CallbackQuery):
     )
     
     await callback.answer()
+
+async def update_timer(user_id, message_id, chat_id):
+    """Функция для обновления секундомера и баллов"""
+    try:
+        while True:
+            # Получаем текущие данные пользователя
+            user = database.get_user(user_id)
+            if not user["active_task"]:
+                break
+                
+            # Рассчитываем время и баллы
+            start_time = datetime.fromtimestamp(user["active_task"]["start_time"])
+            elapsed = datetime.now() - start_time
+            seconds = elapsed.total_seconds()
+            hours, remainder = divmod(int(seconds), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            
+            # Расчет базовых очков (1 балл за 5 секунд)
+            base_points = int(elapsed.total_seconds() / 5)
+            
+            # Форматируем строку секундомера
+            timer_str = f"⏱️ Секундомер: {hours:02}:{minutes:02}:{seconds:02}\n💰 Баллы: {base_points}"
+            
+            # Обновляем сообщение
+            with suppress(Exception):
+                bot = Bot.get_current()
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=timer_str,
+                    reply_markup=keyboards.timer_control_menu()
+                )
+            
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        # Обработка отмены задачи
+        pass
+    except Exception as e:
+        logging.error(f"Ошибка в обновлении таймера: {e}")
+
+# Обработчик кнопки "Завершить задачу"
+@router.message(F.text == "✅ Завершить задачу")
+async def finish_task_handler(message: Message):
+    user_id = message.from_user.id
+    user = database.get_user(user_id)
+    
+    # Проверяем, есть ли активная задача
+    if not user["active_task"]:
+        await message.answer(
+            "У тебя нет активной задачи!",
+            reply_markup=keyboards.main_menu()
+        )
+        return
+    
+    # Останавливаем таймер, если он запущен
+    if user_id in active_timers:
+        active_timers[user_id].cancel()
+        del active_timers[user_id]
+    
+    # Запрашиваем выбор сложности
+    await message.answer(
+        "Выбери сложность выполненной задачи:",
+        reply_markup=keyboards.difficulty_menu()
+    )
+
+# Обработчик кнопки отмены задачи в меню таймера
+@router.message(F.text == "❌ Отменить задачу")
+async def cancel_task_handler(message: Message):
+    user_id = message.from_user.id
+    user = database.get_user(user_id)
+    
+    if not user["active_task"]:
+        await message.answer(
+            "У тебя нет активной задачи!",
+            reply_markup=keyboards.main_menu()
+        )
+        return
+    
+    # Останавливаем таймер, если он запущен
+    if user_id in active_timers:
+        active_timers[user_id].cancel()
+        del active_timers[user_id]
+    
+    user["active_task"] = None
+    database.save_users()
+    
+    await message.answer(
+        "Задача отменена! 👀",
+        reply_markup=keyboards.main_menu()
+    )

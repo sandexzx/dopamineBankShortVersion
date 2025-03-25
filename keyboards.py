@@ -83,3 +83,11 @@ def confirm_delete(reward_id):
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# Клавиатура управления таймером
+def timer_control_menu():
+    kb = [
+        [KeyboardButton(text="✅ Завершить задачу")],
+        [KeyboardButton(text="❌ Отменить задачу")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)

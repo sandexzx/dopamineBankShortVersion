@@ -2,6 +2,7 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.utils.callback_answer import CallbackAnswerMiddleware
 from handlers import register_handlers
 import database
 
@@ -14,6 +15,9 @@ async def main():
     bot = Bot(token="6122819236:AAGZoYhWGxuEjQcXe2z7EqeC9OgusIbU8fE")
     # Создаем диспетчер
     dp = Dispatcher(storage=MemoryStorage())
+    
+    # Добавляем middleware для обработки callback запросов
+    dp.callback_query.middleware(CallbackAnswerMiddleware())
     
     # Инициализируем базу данных
     database.init()
