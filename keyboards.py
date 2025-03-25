@@ -91,3 +91,13 @@ def timer_control_menu():
         [KeyboardButton(text="❌ Отменить задачу")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
+# Инлайн-клавиатура для управления таймером
+def timer_control_inline():
+    buttons = [
+        [
+            InlineKeyboardButton(text="✅ Завершить", callback_data="finish_task"),
+            InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_task")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)

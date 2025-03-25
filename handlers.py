@@ -72,7 +72,7 @@ async def start_task(message: Message):
     # Отправляем сообщение с секундомером
     timer_message = await message.answer(
         "⏱️ Секундомер: 00:00:00\n💰 Баллы: 0",
-        reply_markup=keyboards.timer_control_menu()
+        reply_markup=keyboards.timer_control_inline()
     )
 
     # Запускаем обновление секундомера
@@ -493,6 +493,9 @@ async def back_to_rewards_menu_handler(callback: CallbackQuery):
 async def update_timer(user_id, message_id, chat_id):
     """Функция для обновления секундомера и баллов"""
     try:
+        # Создаем бот с тем же токеном
+        bot = Bot(token="6122819236:AAGZoYhWGxuEjQcXe2z7EqeC9OgusIbU8fE")
+        
         while True:
             # Получаем текущие данные пользователя
             user = database.get_user(user_id)
@@ -514,12 +517,11 @@ async def update_timer(user_id, message_id, chat_id):
             
             # Обновляем сообщение
             with suppress(Exception):
-                bot = Bot.get_current()
                 await bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
                     text=timer_str,
-                    reply_markup=keyboards.timer_control_menu()
+                    reply_markup=keyboards.timer_control_inline()
                 )
             
             await asyncio.sleep(1)
@@ -579,3 +581,50 @@ async def cancel_task_handler(message: Message):
         "Задача отменена! 👀",
         reply_markup=keyboards.main_menu()
     )
+
+# Обработчик кнопки "Завершить задачу" из инлайн-клавиатуры
+@router.callback_query(F.data == "finish_task")
+async def finish_task_callback(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    user = database.get_user(user_id)
+    
+    # Проверяем, есть ли активная задача
+    if not user["active_task"]:
+        await callback.answer("У тебя нет активной задачи!")
+        return
+    
+    # Останавливаем таймер, если он запущен
+    if user_id in active_timers:
+        active_timers[user_id].cancel()
+        del active_timers[user_id]
+    
+    # Запрашиваем выбор сложности
+    await callback.message.reply(
+        "Выбери сложность выполненной задачи:",
+        reply_markup=keyboards.difficulty_menu()
+    )
+    await callback.answer()
+
+# Обработчик кнопки "Отменить задачу" из инлайн-клавиатуры
+@router.callback_query(F.data == "cancel_task")
+async def cancel_task_callback(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    user = database.get_user(user_id)
+    
+    if not user["active_task"]:
+        await callback.answer("У тебя нет активной задачи!")
+        return
+    
+    # Останавливаем таймер, если он запущен
+    if user_id in active_timers:
+        active_timers[user_id].cancel()
+        del active_timers[user_id]
+    
+    user["active_task"] = None
+    database.save_users()
+    
+    await callback.message.reply(
+        "Задача отменена! 👀",
+        reply_markup=keyboards.main_menu()
+    )
+    await callback.answer()
