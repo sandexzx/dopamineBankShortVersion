@@ -4,7 +4,8 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 def main_menu():
     kb = [
         [KeyboardButton(text="🚀 Начать задачу")],
-        [KeyboardButton(text="🎁 Магазин наград"), KeyboardButton(text="📊 Статистика")]
+        [KeyboardButton(text="🎁 Магазин наград"), KeyboardButton(text="📊 Статистика")],
+        [KeyboardButton(text="💰 Изменить баланс")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 

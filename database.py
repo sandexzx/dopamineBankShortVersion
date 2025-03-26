@@ -168,3 +168,10 @@ def buy_reward(user_id, reward_id):
     user["points"] -= reward["cost"]
     save_users()
     return True, f"Вы купили {reward['name']} за {reward['cost']} баллов"
+
+def update_user_points(user_id, points):
+    """Обновление баланса баллов пользователя"""
+    user = get_user(user_id)
+    user["points"] = points
+    save_users()
+    return user["points"]

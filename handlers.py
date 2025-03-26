@@ -24,6 +24,9 @@ class EditRewardStates(StatesGroup):
     waiting_for_name = State()
     waiting_for_cost = State()
 
+class SetPointsStates(StatesGroup):
+    waiting_for_points = State()
+
 # Создаем роутер
 router = Router()
 
@@ -628,3 +631,45 @@ async def cancel_task_callback(callback: CallbackQuery):
         reply_markup=keyboards.main_menu()
     )
     await callback.answer()
+
+# Обработчик кнопки изменения баланса
+@router.message(F.text == "💰 Изменить баланс")
+async def change_balance_handler(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user = database.get_user(user_id)
+    
+    await state.set_state(SetPointsStates.waiting_for_points)
+    await message.answer(
+        f"Твой текущий баланс: {user['points']} баллов.\n"
+        f"Введи новое количество баллов:"
+    )
+
+# Обработчик ввода нового количества баллов
+@router.message(StateFilter(SetPointsStates.waiting_for_points))
+async def process_points(message: Message, state: FSMContext):
+    try:
+        points = int(message.text)
+        
+        if points < 0:
+            await message.answer(
+                "Количество баллов не может быть отрицательным. Введи положительное число:"
+            )
+            return
+        
+        user_id = message.from_user.id
+        
+        # Обновляем баланс пользователя
+        new_balance = database.update_user_points(user_id, points)
+        
+        await message.answer(
+            f"Твой баланс успешно обновлен! 🎉\n"
+            f"Новый баланс: {new_balance} баллов.",
+            reply_markup=keyboards.main_menu()
+        )
+        
+        await state.clear()
+        
+    except ValueError:
+        await message.answer(
+            "Эй, введи корректное количество баллов (только циферки):"
+        )
