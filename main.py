@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 # Инициализируем бота и диспетчер
 async def main():
     # Создаем бота с токеном (вставьте свой токен)
-    bot = Bot(token="6122819236:AAGZoYhWGxuEjQcXe2z7EqeC9OgusIbU8fE")
+    bot = Bot(token="7561456837:AAF8uxiSca9bvrWCenCyUiETB7gk5jVkrrU")
     # Создаем диспетчер
     dp = Dispatcher(storage=MemoryStorage())
     
