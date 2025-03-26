@@ -33,14 +33,35 @@ check_dependencies() {
     for tool in "${tools[@]}"; do
         if ! dpkg -l | grep -q $tool; then
             log_info "Устанавливаем $tool..."
-            sudo apt update
-            sudo apt install -y $tool
+            apt update
+            apt install -y $tool
             if [ $? -ne 0 ]; then
                 log_error "Не удалось установить $tool. Прерываем установку."
                 exit 1
             fi
         fi
     done
+}
+
+# Определение пользователя для сервиса
+setup_user() {
+    # Проверяем, запущен ли скрипт от имени root
+    if [ "$(id -u)" -eq 0 ]; then
+        log_info "Скрипт запущен от имени root."
+        
+        # Проверяем, существует ли пользователь dopaminebot
+        if ! id "dopaminebot" &>/dev/null; then
+            log_info "Создаем пользователя dopaminebot для запуска сервиса..."
+            useradd -m -s /bin/bash dopaminebot
+        fi
+        
+        SERVICE_USER="dopaminebot"
+    else
+        # Если скрипт запущен не от root, используем текущего пользователя
+        SERVICE_USER="$USER"
+    fi
+    
+    log_info "Сервис будет запущен от имени пользователя: $SERVICE_USER"
 }
 
 # Задаем пути установки
@@ -76,7 +97,7 @@ backup_data() {
 stop_service() {
     if systemctl is-active --quiet $SERVICE_NAME; then
         log_info "Останавливаю сервис $SERVICE_NAME..."
-        sudo systemctl stop $SERVICE_NAME
+        systemctl stop $SERVICE_NAME
     fi
 }
 
@@ -88,9 +109,13 @@ get_repo() {
         git pull
     else
         log_info "Клонирую репозиторий..."
-        sudo mkdir -p $INSTALL_DIR
-        sudo git clone $REPO_URL $INSTALL_DIR
-        sudo chown -R $USER:$USER $INSTALL_DIR
+        mkdir -p $INSTALL_DIR
+        git clone $REPO_URL $INSTALL_DIR
+    fi
+    
+    # Устанавливаем правильные права доступа
+    if [ "$(id -u)" -eq 0 ]; then
+        chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
     fi
 }
 
@@ -98,18 +123,32 @@ get_repo() {
 setup_venv() {
     log_info "Настраиваю виртуальное окружение Python..."
     
-    # Создаем виртуальное окружение, если его нет
-    if [ ! -d "$INSTALL_DIR/venv" ]; then
+    # Переключаемся на нужного пользователя для создания venv (если запущено от root)
+    if [ "$(id -u)" -eq 0 ]; then
         cd $INSTALL_DIR
-        python3 -m venv venv
+        
+        # Создаем виртуальное окружение, если его нет
+        if [ ! -d "$INSTALL_DIR/venv" ]; then
+            su -c "python3 -m venv $INSTALL_DIR/venv" $SERVICE_USER
+        fi
+        
+        # Устанавливаем зависимости
+        su -c "source $INSTALL_DIR/venv/bin/activate && pip install --upgrade pip && pip install -r $INSTALL_DIR/requirements.txt && deactivate" $SERVICE_USER
+    else
+        # Если скрипт запущен не от root
+        cd $INSTALL_DIR
+        
+        # Создаем виртуальное окружение, если его нет
+        if [ ! -d "$INSTALL_DIR/venv" ]; then
+            python3 -m venv venv
+        fi
+        
+        # Устанавливаем зависимости
+        source venv/bin/activate
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        deactivate
     fi
-    
-    # Устанавливаем зависимости
-    cd $INSTALL_DIR
-    source venv/bin/activate
-    pip install --upgrade pip
-    pip install -r requirements.txt
-    deactivate
 }
 
 # Восстановление баз данных из бэкапа
@@ -124,20 +163,33 @@ restore_data() {
         log_info "Восстанавливаю данные наград из бэкапа..."
         cp "$BACKUP_DIR/rewards.json" "$INSTALL_DIR/"
     fi
+    
+    # Устанавливаем правильные права доступа для восстановленных файлов
+    if [ "$(id -u)" -eq 0 ]; then
+        chown $SERVICE_USER:$SERVICE_USER "$INSTALL_DIR/users.json" 2>/dev/null
+        chown $SERVICE_USER:$SERVICE_USER "$INSTALL_DIR/rewards.json" 2>/dev/null
+    fi
 }
 
 # Создание systemd сервиса
 create_service() {
     log_info "Создаю systemd сервис..."
     
-    sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null <<EOL
+    # Используем sudo только если не root
+    if [ "$(id -u)" -eq 0 ]; then
+        SUDO_CMD=""
+    else
+        SUDO_CMD="sudo"
+    fi
+    
+    $SUDO_CMD tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null <<EOL
 [Unit]
 Description=Dopamine Bank Telegram Bot
 After=network.target
 
 [Service]
 Type=simple
-User=$USER
+User=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/venv/bin/python main.py
 Restart=always
@@ -149,20 +201,28 @@ WantedBy=multi-user.target
 EOL
 
     # Перезагружаем systemd и включаем сервис
-    sudo systemctl daemon-reload
-    sudo systemctl enable $SERVICE_NAME
+    $SUDO_CMD systemctl daemon-reload
+    $SUDO_CMD systemctl enable $SERVICE_NAME
 }
 
 # Запуск сервиса
 start_service() {
     log_info "Запускаю сервис $SERVICE_NAME..."
-    sudo systemctl start $SERVICE_NAME
+    
+    # Используем sudo только если не root
+    if [ "$(id -u)" -eq 0 ]; then
+        SUDO_CMD=""
+    else
+        SUDO_CMD="sudo"
+    fi
+    
+    $SUDO_CMD systemctl start $SERVICE_NAME
     
     # Проверка статуса сервиса
     if systemctl is-active --quiet $SERVICE_NAME; then
         log_info "Сервис $SERVICE_NAME успешно запущен! 🚀"
     else
-        log_error "Не удалось запустить сервис $SERVICE_NAME. Проверьте логи: sudo journalctl -u $SERVICE_NAME"
+        log_error "Не удалось запустить сервис $SERVICE_NAME. Проверьте логи: journalctl -u $SERVICE_NAME"
     fi
 }
 
@@ -173,9 +233,10 @@ show_status() {
     log_info "==========================="
     log_info "📁 Директория установки: $INSTALL_DIR"
     log_info "🤖 Имя сервиса: $SERVICE_NAME"
-    log_info "📊 Проверить статус: sudo systemctl status $SERVICE_NAME"
-    log_info "📝 Логи: sudo journalctl -u $SERVICE_NAME -f"
-    log_info "🔄 Перезапуск: sudo systemctl restart $SERVICE_NAME"
+    log_info "👤 Пользователь сервиса: $SERVICE_USER"
+    log_info "📊 Проверить статус: systemctl status $SERVICE_NAME"
+    log_info "📝 Логи: journalctl -u $SERVICE_NAME -f"
+    log_info "🔄 Перезапуск: systemctl restart $SERVICE_NAME"
     log_info "==========================="
 }
 
@@ -183,11 +244,8 @@ show_status() {
 main() {
     log_info "🚀 Начинаю установку/обновление Dopamine Bank..."
     
-    # Проверяем, запущен ли скрипт от имени root
-    if [ "$(id -u)" -eq 0 ]; then
-        log_error "Скрипт не должен запускаться от имени root. Используйте обычного пользователя с правами sudo."
-        exit 1
-    fi
+    # Настраиваем пользователя для запуска сервиса
+    setup_user
     
     # Запускаем все шаги установки
     check_dependencies
