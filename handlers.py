@@ -27,6 +27,9 @@ class EditRewardStates(StatesGroup):
 class SetPointsStates(StatesGroup):
     waiting_for_points = State()
 
+class TaskStates(StatesGroup):
+    waiting_for_name = State()
+
 # Создаем роутер
 router = Router()
 
@@ -49,7 +52,7 @@ async def cmd_start(message: Message):
 
 # Обработчик начала задачи
 @router.message(F.text == "🚀 Начать задачу")
-async def start_task(message: Message):
+async def start_task(message: Message, state: FSMContext):
     user = database.get_user(message.from_user.id)
     
     # Проверяем, нет ли уже активной задачи
@@ -69,22 +72,11 @@ async def start_task(message: Message):
         )
         return
     
-    # Начинаем новую задачу
-    task = database.start_task(message.from_user.id)
-    
-    # Отправляем сообщение с секундомером
-    timer_message = await message.answer(
-        "⏱️ Секундомер: 00:00:00\n💰 Баллы: 0",
-        reply_markup=keyboards.timer_control_inline()
-    )
-
-    # Запускаем обновление секундомера
-    user_id = message.from_user.id
-    if user_id in active_timers:
-        active_timers[user_id].cancel()
-
-    active_timers[user_id] = asyncio.create_task(
-        update_timer(user_id, timer_message.message_id, message.chat.id)
+    # Запрашиваем название задачи
+    await state.set_state(TaskStates.waiting_for_name)
+    await message.answer(
+        "Введи название задачи:",
+        reply_markup=None
     )
 
 # Словарь для преобразования названий сложности в ключи БД
@@ -99,7 +91,7 @@ difficulty_map = {
 
 # Обработчик завершения задачи по выбору сложности
 @router.message(F.text.in_(difficulty_map.keys()))
-async def end_task(message: Message):
+async def end_task(message: Message, state: FSMContext):
     user = database.get_user(message.from_user.id)
     
     # Проверяем, есть ли активная задача
@@ -113,8 +105,12 @@ async def end_task(message: Message):
     # Получаем ключ сложности для БД
     difficulty = difficulty_map[message.text]
     
+    # Получаем название задачи если оно было сохранено
+    data = await state.get_data()
+    task_name = data.get("task_name", "Задача")
+    
     # Завершаем задачу
-    result = database.end_task(message.from_user.id, difficulty)
+    result = database.end_task(message.from_user.id, difficulty, task_name)
     
     if not result:
         await message.answer(
@@ -131,7 +127,7 @@ async def end_task(message: Message):
     
     # Отправляем результат
     await message.answer(
-        f"Задача завершена! 🎉\n\n"
+        f"Задача завершена! 🎉\n"
         f"⏱️ Время выполнения: {time_str}\n"
         f"🔢 Базовые баллы: {result['base_points']}\n"
         f"📊 Сложность: {message.text} (x{result['multiplier']})\n"
@@ -139,6 +135,8 @@ async def end_task(message: Message):
         f"Всего у тебя: {user['points']} баллов",
         reply_markup=keyboards.main_menu()
     )
+    
+    await state.clear()
 
 # Обработчик отмены задачи
 @router.message(F.text == "❌ Отменить задачу")
@@ -181,11 +179,30 @@ async def show_stats(message: Message):
         if count > 0
     ]) or "Пока нет данных"
     
+    # Получаем задачи за сегодня
+    today_tasks = database.get_today_tasks(message.from_user.id)
+    
+    # Формируем список задач за сегодня
+    today_tasks_text = ""
+    if today_tasks:
+        for task in today_tasks:
+            duration = timedelta(seconds=int(task["duration"]))
+            hours, remainder = divmod(duration.seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            time_str = f"{hours:02}:{minutes:02}:{seconds:02}"
+            
+            today_tasks_text += f"\n• #{task['id']} - {task['name']} "
+            today_tasks_text += f"({difficulty_names[task['difficulty']]})\n"
+            today_tasks_text += f"  ⏱️ {time_str} | 💰 {task['points']} баллов"
+    else:
+        today_tasks_text = "Сегодня нет выполненных задач"
+    
     stats_text = (
         f"📊 Твоя статистика:\n\n"
         f"🔢 Выполнено задач: {user['tasks_completed']}\n"
         f"💰 Накоплено баллов: {user['points']}\n\n"
-        f"📋 Статистика по сложности:\n{difficulty_stats}\n"
+        f"📋 Статистика по сложности:\n{difficulty_stats}\n\n"
+        f"📆 Задачи за сегодня:\n{today_tasks_text}"
     )
     
     await message.answer(
@@ -493,7 +510,7 @@ async def back_to_rewards_menu_handler(callback: CallbackQuery):
     
     await callback.answer()
 
-async def update_timer(user_id, message_id, chat_id):
+async def update_timer(user_id, message_id, chat_id, task_name="Задача"):
     """Функция для обновления секундомера и баллов"""
     try:
         # Создаем бот с тем же токеном
@@ -516,7 +533,9 @@ async def update_timer(user_id, message_id, chat_id):
             base_points = int(elapsed.total_seconds() / 5)
             
             # Форматируем строку секундомера
-            timer_str = f"⏱️ Секундомер: {hours:02}:{minutes:02}:{seconds:02}\n💰 Баллы: {base_points}"
+            timer_str = f"🔖 Задача: {task_name}\n"
+            timer_str += f"⏱️ Секундомер: {hours:02}:{minutes:02}:{seconds:02}\n"
+            timer_str += f"💰 Баллы: {base_points}"
             
             # Обновляем сообщение
             with suppress(Exception):
@@ -673,3 +692,54 @@ async def process_points(message: Message, state: FSMContext):
         await message.answer(
             "Эй, введи корректное количество баллов (только циферки):"
         )
+
+@router.message(StateFilter(TaskStates.waiting_for_name))
+async def process_task_name(message: Message, state: FSMContext):
+    # Сохраняем название задачи
+    await state.update_data(task_name=message.text)
+    
+    # Начинаем новую задачу
+    task = database.start_task(message.from_user.id)
+    
+    # Отправляем сообщение с секундомером
+    timer_message = await message.answer(
+        f"🔖 Задача: {message.text}\n"
+        f"⏱️ Секундомер: 00:00:00\n"
+        f"💰 Баллы: 0",
+        reply_markup=keyboards.timer_control_inline()
+    )
+
+    # Запускаем обновление секундомера
+    user_id = message.from_user.id
+    if user_id in active_timers:
+        active_timers[user_id].cancel()
+
+    active_timers[user_id] = asyncio.create_task(
+        update_timer(user_id, timer_message.message_id, message.chat.id, message.text)
+    )
+
+@router.callback_query(F.data == "finish_task")
+async def finish_task_callback(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    user = database.get_user(user_id)
+    
+    # Проверяем, есть ли активная задача
+    if not user["active_task"]:
+        await callback.answer("У тебя нет активной задачи!")
+        return
+    
+    # Получаем сохраненное название задачи
+    data = await state.get_data()
+    task_name = data.get("task_name", "Задача")
+    
+    # Останавливаем таймер, если он запущен
+    if user_id in active_timers:
+        active_timers[user_id].cancel()
+        del active_timers[user_id]
+    
+    # Запрашиваем выбор сложности
+    await callback.message.reply(
+        "Выбери сложность выполненной задачи:",
+        reply_markup=keyboards.difficulty_menu()
+    )
+    await callback.answer()

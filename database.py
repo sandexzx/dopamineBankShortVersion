@@ -60,7 +60,8 @@ def get_user(user_id):
                 "hard": 0,
                 "catastrophic": 0
             },
-            "active_task": None
+            "active_task": None,
+            "tasks_history": []  # Добавляем историю задач
         }
         save_users()
     return users[user_id_str]
@@ -75,7 +76,7 @@ def start_task(user_id):
     save_users()
     return user["active_task"]
 
-def end_task(user_id, difficulty):
+def end_task(user_id, difficulty, task_name="Задача"):
     """Завершение задачи"""
     user = get_user(user_id)
     if not user["active_task"]:
@@ -107,6 +108,22 @@ def end_task(user_id, difficulty):
     user["points"] += final_points
     user["tasks_completed"] += 1
     user["difficulty_stats"][difficulty] += 1
+    
+    # Сохраняем задачу в историю
+    task_id = user["tasks_completed"]  # ID задачи = порядковый номер
+    task_history_entry = {
+        "id": task_id,
+        "name": task_name,
+        "difficulty": difficulty,
+        "start_time": start_time,
+        "end_time": end_time,
+        "duration": seconds,
+        "points": final_points,
+        "date": datetime.fromtimestamp(end_time).strftime("%Y-%m-%d")
+    }
+    user["tasks_history"].append(task_history_entry)
+    
+    # Очищаем активную задачу
     user["active_task"] = None
     
     save_users()
@@ -116,7 +133,8 @@ def end_task(user_id, difficulty):
         "seconds": int(seconds),
         "base_points": int(base_points),
         "multiplier": multiplier,
-        "final_points": final_points
+        "final_points": final_points,
+        "task_id": task_id
     }
 
 def get_rewards():
@@ -175,3 +193,16 @@ def update_user_points(user_id, points):
     user["points"] = points
     save_users()
     return user["points"]
+
+def get_today_tasks(user_id):
+    """Получение задач за сегодняшний день"""
+    user = get_user(user_id)
+    today = datetime.now().strftime("%Y-%m-%d")
+    
+    # Фильтруем задачи по сегодняшней дате
+    today_tasks = [task for task in user["tasks_history"] if task["date"] == today]
+    
+    # Сортируем по времени завершения (от новых к старым)
+    today_tasks.sort(key=lambda x: x["end_time"], reverse=True)
+    
+    return today_tasks
