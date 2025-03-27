@@ -12,6 +12,9 @@ from datetime import datetime, timedelta
 from contextlib import suppress
 import asyncio
 
+# Добавь это в начало файла handlers.py
+logging.getLogger('aiohttp').setLevel(logging.ERROR)
+
 # Словарь для хранения задач секундомеров для пользователей
 active_timers = {}
 
@@ -510,11 +513,10 @@ async def back_to_rewards_menu_handler(callback: CallbackQuery):
     
     await callback.answer()
 
-async def update_timer(user_id, message_id, chat_id, task_name="Задача"):
+async def update_timer(user_id, message_id, chat_id, bot, task_name="Задача"):
     """Функция для обновления секундомера и баллов"""
     try:
-        # Создаем бот с тем же токеном
-        bot = Bot(token="6122819236:AAGZoYhWGxuEjQcXe2z7EqeC9OgusIbU8fE")
+        # Используем переданный экземпляр бота вместо создания нового
         
         while True:
             # Получаем текущие данные пользователя
@@ -522,17 +524,15 @@ async def update_timer(user_id, message_id, chat_id, task_name="Задача"):
             if not user["active_task"]:
                 break
                 
-            # Рассчитываем время и баллы
+            # Расчеты и форматирование остаются теми же
             start_time = datetime.fromtimestamp(user["active_task"]["start_time"])
             elapsed = datetime.now() - start_time
             seconds = elapsed.total_seconds()
             hours, remainder = divmod(int(seconds), 3600)
             minutes, seconds = divmod(remainder, 60)
             
-            # Расчет базовых очков (1 балл за 5 секунд)
             base_points = int(elapsed.total_seconds() / 5)
             
-            # Форматируем строку секундомера
             timer_str = f"🔖 Задача: {task_name}\n"
             timer_str += f"⏱️ Секундомер: {hours:02}:{minutes:02}:{seconds:02}\n"
             timer_str += f"💰 Баллы: {base_points}"
@@ -694,7 +694,7 @@ async def process_points(message: Message, state: FSMContext):
         )
 
 @router.message(StateFilter(TaskStates.waiting_for_name))
-async def process_task_name(message: Message, state: FSMContext):
+async def process_task_name(message: Message, state: FSMContext, bot: Bot):
     # Сохраняем название задачи
     await state.update_data(task_name=message.text)
     
@@ -715,7 +715,7 @@ async def process_task_name(message: Message, state: FSMContext):
         active_timers[user_id].cancel()
 
     active_timers[user_id] = asyncio.create_task(
-        update_timer(user_id, timer_message.message_id, message.chat.id, message.text)
+        update_timer(user_id, timer_message.message_id, message.chat.id, bot, message.text)
     )
 
 @router.callback_query(F.data == "finish_task")
@@ -743,3 +743,11 @@ async def finish_task_callback(callback: CallbackQuery, state: FSMContext):
         reply_markup=keyboards.difficulty_menu()
     )
     await callback.answer()
+
+# Добавить в конец файла handlers.py
+async def shutdown_timers():
+    """Функция для корректного завершения всех таймеров при остановке бота"""
+    for timer in active_timers.values():
+        timer.cancel()
+    active_timers.clear()
+    logging.info("Все таймеры остановлены")
