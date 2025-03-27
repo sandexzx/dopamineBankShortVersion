@@ -248,19 +248,20 @@ async def rewards_menu_handler(message: Message):
 # Обработчик списка наград
 @router.message(F.text == "🛍️ Список наград")
 async def list_rewards(message: Message):
-    rewards = database.get_rewards()
-    user = database.get_user(message.from_user.id)
+    user_id = message.from_user.id
+    rewards = database.get_rewards(user_id)
+    user = database.get_user(user_id)
     
     if not rewards:
         await message.answer(
-            "В магазине пока нет наград. Создайте их!",
+            "У тебя в магазине пока нет наград. Создайте их!",
             reply_markup=keyboards.rewards_menu(True)
         )
         return
     
     await message.answer(
-        f"Доступные награды (у тебя {user['points']} баллов):\n"
-        f"✅ - доступно для покупки\n"
+        f"Доступные награды (у тебя {user['points']} баллов):"
+        f"✅ - доступно для покупки"
         f"❌ - недостаточно баллов",
         reply_markup=keyboards.rewards_inline_keyboard(rewards, user["points"])
     )
@@ -307,9 +308,10 @@ async def process_reward_cost(message: Message, state: FSMContext):
             
         data = await state.get_data()
         name = data["name"]
+        user_id = message.from_user.id
         
         # Добавляем награду
-        reward_id = database.add_reward(name, cost)
+        reward_id = database.add_reward(user_id, name, cost)
         
         await message.answer(
             f"Награда '{name}' с ценой {cost} баллов успешно добавлена!",
@@ -327,14 +329,15 @@ async def process_reward_cost(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("buy_"))
 async def buy_reward_handler(callback: CallbackQuery):
     reward_id = callback.data.split("_")[1]
-    rewards = database.get_rewards()
+    user_id = callback.from_user.id
+    rewards = database.get_rewards(user_id)
     
     if reward_id not in rewards:
         await callback.answer("Эта награда больше не доступна")
         return
     
     reward = rewards[reward_id]
-    user = database.get_user(callback.from_user.id)
+    user = database.get_user(user_id)
     
     if user["points"] < reward["cost"]:
         await callback.answer("У вас недостаточно баллов для покупки этой награды!")
@@ -350,12 +353,13 @@ async def buy_reward_handler(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("confirm_buy_"))
 async def confirm_buy_handler(callback: CallbackQuery):
     reward_id = callback.data.split("_")[2]
+    user_id = callback.from_user.id
     
-    success, message = database.buy_reward(callback.from_user.id, reward_id)
+    success, message = database.buy_reward(user_id, reward_id)
     
     if success:
         await callback.message.edit_text(
-            f"{message}\n\nНаслаждайтесь своей наградой! 🎉"
+            f"{message} Наслаждайтесь своей наградой! 🎉"
         )
         
         # Отправляем новое сообщение с клавиатурой
@@ -391,7 +395,8 @@ async def cancel_purchase_handler(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("edit_"))
 async def edit_reward_handler(callback: CallbackQuery, state: FSMContext):
     reward_id = callback.data.split("_")[1]
-    rewards = database.get_rewards()
+    user_id = callback.from_user.id
+    rewards = database.get_rewards(user_id)
     
     if reward_id not in rewards:
         await callback.answer("Эта награда больше не доступна")
@@ -399,7 +404,7 @@ async def edit_reward_handler(callback: CallbackQuery, state: FSMContext):
     
     reward = rewards[reward_id]
     
-    await state.update_data(reward_id=reward_id)
+    await state.update_data(reward_id=reward_id, user_id=user_id)
     await state.set_state(EditRewardStates.waiting_for_name)
     
     await callback.message.edit_text(
@@ -438,10 +443,11 @@ async def process_edit_cost(message: Message, state: FSMContext):
         
         data = await state.get_data()
         reward_id = data["reward_id"]
+        user_id = data.get("user_id", message.from_user.id)
         new_name = data.get("new_name")
         
         # Обновляем награду
-        success = database.update_reward(reward_id, new_name, cost)
+        success = database.update_reward(user_id, reward_id, new_name, cost)
         
         if success:
             await message.answer(
@@ -465,7 +471,8 @@ async def process_edit_cost(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("delete_"))
 async def delete_reward_handler(callback: CallbackQuery):
     reward_id = callback.data.split("_")[1]
-    rewards = database.get_rewards()
+    user_id = callback.from_user.id
+    rewards = database.get_rewards(user_id)
     
     if reward_id not in rewards:
         await callback.answer("Эта награда больше не доступна")
@@ -484,8 +491,9 @@ async def delete_reward_handler(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("confirm_delete_"))
 async def confirm_delete_handler(callback: CallbackQuery):
     reward_id = callback.data.split("_")[2]
+    user_id = callback.from_user.id
     
-    success = database.delete_reward(reward_id)
+    success = database.delete_reward(user_id, reward_id)
     
     if success:
         await callback.message.edit_text(

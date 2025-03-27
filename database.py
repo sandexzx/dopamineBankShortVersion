@@ -12,7 +12,7 @@ rewards = {}
 
 def init():
     """Инициализация базы данных"""
-    global users, rewards
+    global users
     
     # Загружаем данные пользователей
     if os.path.exists(USERS_FILE):
@@ -22,18 +22,34 @@ def init():
         users = {}
         save_users()
     
-    # Загружаем данные наград
+    # Перенос данных из старого формата в новый (если нужно)
+    migrate_rewards_if_needed()
+
+def migrate_rewards_if_needed():
+    """Миграция наград из старого формата в новый"""
+    global users
+    
+    # Проверяем, существует ли старый файл с наградами
     if os.path.exists(REWARDS_FILE):
+        # Загружаем старые награды
         with open(REWARDS_FILE, 'r', encoding='utf-8') as f:
-            rewards = json.load(f)
-    else:
-        # Создаем начальные награды
-        rewards = {
-            "1": {"name": "Чашка кофе", "cost": 100},
-            "2": {"name": "Просмотр фильма", "cost": 300},
-            "3": {"name": "Выходной день", "cost": 1000}
-        }
-        save_rewards()
+            old_rewards = json.load(f)
+        
+        # Проверяем всех существующих пользователей
+        for user_id, user_data in users.items():
+            # Если у пользователя еще нет поля rewards, создаем его
+            if "rewards" not in user_data:
+                user_data["rewards"] = {}
+                
+            # Если у пользователя нет наград, копируем дефолтные
+            if len(user_data["rewards"]) == 0:
+                user_data["rewards"] = old_rewards.copy()
+        
+        # Сохраняем изменения
+        save_users()
+        
+        # Переименовываем старый файл, чтобы не использовать его снова
+        os.rename(REWARDS_FILE, REWARDS_FILE + ".backup")
 
 def save_users():
     """Сохранение данных пользователей"""
@@ -61,7 +77,8 @@ def get_user(user_id):
                 "catastrophic": 0
             },
             "active_task": None,
-            "tasks_history": []  # Добавляем историю задач
+            "tasks_history": [],  # Добавляем историю задач
+            "rewards": {}  # Добавляем персональные награды
         }
         save_users()
     return users[user_id_str]
@@ -137,22 +154,31 @@ def end_task(user_id, difficulty, task_name="Задача"):
         "task_id": task_id
     }
 
-def get_rewards():
-    """Получение списка наград"""
-    return rewards
+def get_rewards(user_id):
+    """Получение списка наград пользователя"""
+    user = get_user(user_id)
+    return user["rewards"]
 
-def add_reward(name, cost):
-    """Добавление новой награды"""
+def add_reward(user_id, name, cost):
+    """Добавление новой награды для пользователя"""
+    user = get_user(user_id)
+    rewards = user["rewards"]
+    
+    # Генерируем новый ID для награды
     reward_id = str(max(map(int, rewards.keys()), default=0) + 1)
+    
     rewards[reward_id] = {
         "name": name,
         "cost": cost
     }
-    save_rewards()
+    save_users()
     return reward_id
 
-def update_reward(reward_id, name=None, cost=None):
-    """Обновление награды"""
+def update_reward(user_id, reward_id, name=None, cost=None):
+    """Обновление награды пользователя"""
+    user = get_user(user_id)
+    rewards = user["rewards"]
+    
     if reward_id not in rewards:
         return False
     
@@ -161,21 +187,26 @@ def update_reward(reward_id, name=None, cost=None):
     if cost is not None:
         rewards[reward_id]["cost"] = cost
     
-    save_rewards()
+    save_users()
     return True
 
-def delete_reward(reward_id):
-    """Удаление награды"""
+def delete_reward(user_id, reward_id):
+    """Удаление награды пользователя"""
+    user = get_user(user_id)
+    rewards = user["rewards"]
+    
     if reward_id not in rewards:
         return False
     
     del rewards[reward_id]
-    save_rewards()
+    save_users()
     return True
 
 def buy_reward(user_id, reward_id):
     """Покупка награды"""
     user = get_user(user_id)
+    rewards = user["rewards"]
+    
     if reward_id not in rewards:
         return False, "Награда не найдена"
     
