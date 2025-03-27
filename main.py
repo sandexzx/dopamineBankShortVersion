@@ -25,7 +25,7 @@ async def close_all_sessions():
 # Инициализируем бота и диспетчер
 async def main():
     # Создаем бота с токеном (вставьте свой токен)
-    bot = Bot(token="6122819236:AAGTZozyMnGx7sn1vk2fJEgcNOgZbuzA9d8")
+    bot = Bot(token="7561456837:AAF8uxiSca9bvrWCenCyUiETB7gk5jVkrrU")
     # Создаем диспетчер
     dp = Dispatcher(storage=MemoryStorage())
     
