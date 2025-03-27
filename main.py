@@ -9,6 +9,19 @@ import database
 # Настраиваем логирование
 logging.basicConfig(level=logging.INFO)
 
+async def close_all_sessions():
+    """Закрываем все активные сессии aiohttp"""
+    sessions = [session for task in asyncio.all_tasks() 
+               for session in [getattr(task, '_session', None)] 
+               if session is not None]
+    
+    for session in sessions:
+        if not session.closed:
+            await session.close()
+    
+    # Даем время на закрытие соединений
+    await asyncio.sleep(0.25)
+
 # Инициализируем бота и диспетчер
 async def main():
     # Создаем бота с токеном (вставьте свой токен)
@@ -33,6 +46,9 @@ async def main():
     finally:
         # Закрываем все активные таймеры при завершении
         await shutdown_timers()
+        
+        # Закрываем все сессии aiohttp
+        await close_all_sessions()
         
         # Закрываем сессию бота
         await bot.session.close()

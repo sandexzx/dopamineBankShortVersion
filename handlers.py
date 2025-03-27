@@ -15,6 +15,25 @@ import asyncio
 # Добавь это в начало файла handlers.py
 logging.getLogger('aiohttp').setLevel(logging.ERROR)
 
+# Контекстный менеджер для таймеров
+class TimerTask:
+    def __init__(self, coro):
+        self.coro = coro
+        self.task = None
+    
+    async def __aenter__(self):
+        self.task = asyncio.create_task(self.coro)
+        return self.task
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if not self.task.done():
+            self.task.cancel()
+        
+        try:
+            await self.task
+        except asyncio.CancelledError:
+            pass
+
 # Словарь для хранения задач секундомеров для пользователей
 active_timers = {}
 
@@ -751,3 +770,6 @@ async def shutdown_timers():
         timer.cancel()
     active_timers.clear()
     logging.info("Все таймеры остановлены")
+    
+    # Даем время на завершение отмененных задач
+    await asyncio.sleep(0.1)
