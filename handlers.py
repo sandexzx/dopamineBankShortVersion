@@ -37,6 +37,9 @@ class TimerTask:
 # Словарь для хранения задач секундомеров для пользователей
 active_timers = {}
 
+# Множество пользователей, отключивших напоминания
+reminders_disabled = set()
+
 # Определение состояний FSM
 class RewardStates(StatesGroup):
     waiting_for_name = State()
@@ -146,6 +149,10 @@ async def end_task(message: Message, state: FSMContext):
     hours, remainder = divmod(time_delta.seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     time_str = f"{hours:02}:{minutes:02}:{seconds:02}"
+
+    # Сбрасываем статус напоминаний
+    if message.from_user.id in reminders_disabled:
+        reminders_disabled.remove(message.from_user.id)
     
     # Отправляем результат
     await message.answer(
@@ -543,7 +550,7 @@ async def back_to_rewards_menu_handler(callback: CallbackQuery):
 async def update_timer(user_id, message_id, chat_id, bot, task_name="Задача"):
     """Функция для обновления секундомера и баллов"""
     try:
-        # Используем переданный экземпляр бота вместо создания нового
+        reminder_counter = 0  # Счетчик для отправки напоминаний
         
         while True:
             # Получаем текущие данные пользователя
@@ -573,12 +580,44 @@ async def update_timer(user_id, message_id, chat_id, bot, task_name="Задач�
                     reply_markup=keyboards.timer_control_inline()
                 )
             
+            # Отправляем напоминание каждые 5 минут (300 секунд)
+            reminder_counter += 1
+            if reminder_counter >= 300:  # 300 итераций по 1 секунде = 5 минут
+                reminder_counter = 0
+                await send_reminder(user_id, chat_id, bot, task_name)
+            
             await asyncio.sleep(1)
     except asyncio.CancelledError:
         # Обработка отмены задачи
         pass
     except Exception as e:
         logging.error(f"Ошибка в обновлении таймера: {e}")
+
+async def send_reminder(user_id, chat_id, bot, task_name="Задача"):
+    """Отправляет напоминание о активной задаче"""
+    try:
+        # Проверка, не отключил ли пользователь напоминания
+        if user_id in reminders_disabled:
+            return
+            
+        user = database.get_user(user_id)
+        if not user["active_task"]:
+            return
+            
+        # Формируем напоминание
+        reminder_text = (
+            f"🔔 Эй! У тебя всё ещё запущена задача: \"{task_name}\"!\n\n"
+            f"Если ты уже её выполнил - не забудь завершить и получить свои баллы! 💰"
+        )
+        
+        # Отправляем напоминание отдельным сообщением
+        await bot.send_message(
+            chat_id=chat_id,
+            text=reminder_text,
+            reply_markup=keyboards.timer_reminder_inline()
+        )
+    except Exception as e:
+        logging.error(f"Ошибка при отправке напоминания: {e}")
 
 # Обработчик кнопки "Завершить задачу"
 @router.message(F.text == "✅ Завершить задачу")
@@ -625,6 +664,10 @@ async def cancel_task_handler(message: Message):
     
     user["active_task"] = None
     database.save_users()
+
+    # Сбрасываем статус напоминаний
+    if message.from_user.id in reminders_disabled:
+        reminders_disabled.remove(message.from_user.id)
     
     await message.answer(
         "Задача отменена! 👀",
@@ -671,6 +714,10 @@ async def cancel_task_callback(callback: CallbackQuery):
     
     user["active_task"] = None
     database.save_users()
+
+    # Сбрасываем статус напоминаний
+    if user_id in reminders_disabled:
+        reminders_disabled.remove(user_id)
     
     await callback.message.reply(
         "Задача отменена! 👀",
@@ -763,6 +810,10 @@ async def finish_task_callback(callback: CallbackQuery, state: FSMContext):
     if user_id in active_timers:
         active_timers[user_id].cancel()
         del active_timers[user_id]
+
+    # Сбрасываем статус напоминаний
+    if user_id in reminders_disabled:
+        reminders_disabled.remove(user_id)
     
     # Запрашиваем выбор сложности
     await callback.message.reply(
@@ -777,7 +828,25 @@ async def shutdown_timers():
     for timer in active_timers.values():
         timer.cancel()
     active_timers.clear()
+    reminders_disabled.clear()
     logging.info("Все таймеры остановлены")
     
     # Даем время на завершение отмененных задач
     await asyncio.sleep(0.1)
+
+# Словарь для хранения статуса напоминаний пользователей
+reminders_disabled = set()
+
+# Обработчик кнопки "Больше не напоминать"
+@router.callback_query(F.data == "stop_reminders")
+async def stop_reminders_callback(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    
+    # Добавляем пользователя в список тех, кому не нужны напоминания
+    reminders_disabled.add(user_id)
+    
+    await callback.message.edit_text(
+        "Напоминания для текущей задачи отключены! 🔕\n\n"
+        "Не забудь завершить задачу, когда будешь готов!"
+    )
+    await callback.answer()

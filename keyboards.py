@@ -102,3 +102,13 @@ def timer_control_inline():
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# Инлайн-клавиатура для напоминаний
+def timer_reminder_inline():
+    buttons = [
+        [
+            InlineKeyboardButton(text="✅ Завершить задачу", callback_data="finish_task"),
+            InlineKeyboardButton(text="🔕 Больше не напоминать", callback_data="stop_reminders")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
